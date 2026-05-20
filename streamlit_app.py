@@ -267,25 +267,31 @@ FREQUENCY_MODE_TEXT = {
         "expect": "Exact revival, generally later than the integer case.",
     },
     "incommensurate": {
-        "title": "Incommensurate frequencies",
+        "title": "Well-approximable incommensurate frequencies",
         "desc": (
-            "Frequencies are chosen from sqrt(p) with distinct primes "
-            "p so that no pair of ratios is rational."
+            "Ratios are irrational, but deliberately close to an "
+            "integer-commensurate ladder: n + eps*sqrt(p_n).  This "
+            "keeps them incommensurate while making rational near-"
+            "rephasings visible at small N."
         ),
         "expect": (
-            "No clean exact revival.  Only partial, irregular, "
-            "accidental near-recurrences are expected."
+            "No exact revival, but clearer near-revivals than the "
+            "badly-approximable family because the ratios are close to "
+            "simple rational structure."
         ),
     },
     "badly_approximable": {
-        "title": "Badly approximable frequencies",
+        "title": "Badly approximable metallic-ratio frequencies",
         "desc": (
-            "Frequencies built from the golden ratio phi and its "
-            "powers, shifted to remove the degenerate ratio 1."
+            "Ratios use metallic quadratic irrationals "
+            "m_n=(n+sqrt(n^2+4))/2, normalised to the same mean scale. "
+            "These have bounded periodic continued fractions and resist "
+            "good rational approximation."
         ),
         "expect": (
-            "Weaker near-revivals than the generic irrational case "
-            "because phases never align even approximately."
+            "Weaker finite-time near-revivals than the well-"
+            "approximable incommensurate family, especially for small "
+            "N when the time window is not too short."
         ),
     },
     "weak_disorder": {
@@ -302,19 +308,84 @@ FREQUENCY_MODE_TEXT = {
 }
 
 
+def _first_primes(n):
+    """Return the first n primes; small helper for frequency families."""
+    primes = []
+    x = 2
+    while len(primes) < n:
+        is_prime = True
+        for p in range(2, int(np.sqrt(x)) + 1):
+            if x % p == 0:
+                is_prime = False
+                break
+        if is_prime:
+            primes.append(x)
+        x += 1
+    return primes
+
+
+def _normalise_to_unit_mean(values):
+    values = np.array(values, dtype=float)
+    if len(values) == 0:
+        return []
+    mean = float(np.mean(values))
+    if mean == 0:
+        return list(values)
+    return list(values / mean)
+
+
+def _well_approximable_incommensurate_ratios(N, eps=0.035):
+    """
+    Irrational but intentionally well-approximable ratios.
+
+    Construction:
+        r_n = n + eps*sqrt(p_n),  n = 1,...,N.
+
+    The integer ladder gives a nearby common period, while the sqrt(p_n)
+    perturbation makes the ratios genuinely irrational.  This is useful as a
+    pedagogical contrast with badly-approximable ratios: both are
+    incommensurate, but this family admits much better finite-time
+    near-rephasings.
+    """
+    if N <= 0:
+        return []
+    primes = _first_primes(N)
+    ladder = np.arange(1, N + 1, dtype=float)
+    raw = ladder + eps * np.sqrt(np.array(primes, dtype=float))
+    return _normalise_to_unit_mean(raw)
+
+
+def _metallic_badly_approximable_ratios(N):
+    """
+    Metallic quadratic irrationals, normalised to unit mean.
+
+    m_n = (n + sqrt(n^2 + 4))/2 has periodic continued fraction
+    [n; n, n, n, ...].  Each m_n is a quadratic irrational and is badly
+    approximable.  This avoids the earlier golden-ratio-power artefact where
+    all entries were locked inside the same very low-dimensional structure.
+    """
+    if N <= 0:
+        return []
+    n = np.arange(1, N + 1, dtype=float)
+    raw = 0.5 * (n + np.sqrt(n * n + 4.0))
+    return _normalise_to_unit_mean(raw)
+
+
 def build_params(N, g0, J0, mode, disorder=0.05, seed=123):
     """
     Build a list of (g_i, J_i) per branch.
 
-    NOTE on the fix:
-    ----------------
-    The original prototype used base[0] = 1 for *all* irrational modes
-    -- which means the first branch frequency was ALWAYS commensurate
-    (rational ratio 1) with itself; for N=1 the plot reduced to a
-    perfectly periodic single-frequency curve, masking the
-    incommensurate physics.  Here we use truly irrational generators
-    and we explicitly avoid the ratio 1 inside the "incommensurate"
-    and "badly_approximable" families.
+    The deterministic irrational families are now deliberately separated:
+
+    * incommensurate:
+        irrational but well-approximable, close to an integer ladder;
+        this creates visible finite-time near-revivals.
+
+    * badly_approximable:
+        metallic quadratic irrationals with bounded continued fractions;
+        this suppresses rational near-rephasing more strongly.
+
+    Both families are normalised to unit mean before multiplying by g0,J0.
     """
     if N <= 0:
         return []
@@ -331,21 +402,10 @@ def build_params(N, g0, J0, mode, disorder=0.05, seed=123):
         ratios = [base[i % len(base)] for i in range(N)]
 
     elif mode == "incommensurate":
-        # sqrt of pairwise-distinct primes -> pairwise irrational ratios
-        primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53]
-        base = [np.sqrt(p) / np.sqrt(2.0) for p in primes]
-        # base[0] = 1 (sqrt(2)/sqrt(2)); to make EVERY pair irrational we
-        # scale by sqrt(2) so the smallest ratio is sqrt(2)/sqrt(2)=1
-        # but base[1]/base[0] = sqrt(3/2) etc., already irrational.
-        # We keep base[0]=1 (it just sets the overall frequency scale).
-        ratios = [base[i % len(base)] for i in range(N)]
+        ratios = _well_approximable_incommensurate_ratios(N, eps=0.035)
 
     elif mode == "badly_approximable":
-        phi = 0.5 * (1.0 + np.sqrt(5.0))
-        # phi, phi^2 - 1 = phi, etc.  Use shifted powers so no pair is
-        # rationally related and the ratio 1 does NOT appear.
-        base = [phi, phi**2, phi**3, phi**4, 1.0 / phi, 2.0 / phi]
-        ratios = [base[i % len(base)] for i in range(N)]
+        ratios = _metallic_badly_approximable_ratios(N)
 
     elif mode == "weak_disorder":
         rng = np.random.default_rng(seed)
@@ -355,59 +415,46 @@ def build_params(N, g0, J0, mode, disorder=0.05, seed=123):
     else:
         ratios = [1.0] * N
 
-    return [(g0 * r, J0 * r) for r in ratios]
-
+    return [(g0 * float(r), J0 * float(r)) for r in ratios]
 
 
 def random_params(N, g0, J0, family, rng):
     """
     Build one random frequency realisation for ensemble-style comparison.
 
-    The output has the same format as build_params: a list of (g_i, J_i).
-
     incommensurate:
-        Generic random irrational-like ratios.  In floating-point numerics,
-        independent log-normal samples are effectively incommensurate.
+        Well-approximable irrational ratios near randomly perturbed integer
+        ladders.  These are not rationally commensurate, but they are close to
+        simple rational structure, so near-revivals can appear.
 
     badly_approximable:
-        Random quadratic irrationals of the form (a + sqrt(d)) / b.
-        Each quadratic irrational is individually badly approximable because
-        it has an eventually periodic continued fraction.  For small N this
-        does NOT guarantee universally weaker revivals than a generic
-        incommensurate sample; that is precisely why this tab samples an
-        ensemble instead of relying on one deterministic example.
+        Random metallic-type quadratic irrationals with bounded periodic
+        continued fractions, then normalised to the same mean scale.
     """
     if N <= 0:
         return []
 
     if family == "incommensurate":
-        # Kept near one scale, but with enough spread to break synchrony.
-        ratios = rng.lognormal(mean=0.0, sigma=0.35, size=N)
+        primes = np.array(_first_primes(N), dtype=float)
+        ladder = np.arange(1, N + 1, dtype=float)
+        eps = rng.uniform(0.015, 0.070)
+        jitter = rng.uniform(-0.010, 0.010, size=N)
+        ratios = ladder + eps * np.sqrt(primes) + jitter
 
     elif family == "badly_approximable":
-        squarefree_pool = np.array([
-            2, 3, 5, 6, 7, 10, 11, 13, 14, 15,
-            17, 19, 21, 22, 23, 26, 29, 30, 31, 33,
-            34, 35, 37, 38, 39, 41, 42, 43, 46, 47,
-            51, 53, 55, 57, 58, 59, 61, 62, 65, 66,
-            67, 69, 70, 71, 73, 74, 77, 78, 79, 82,
-        ])
-        replace = N > len(squarefree_pool)
-        d = rng.choice(squarefree_pool, size=N, replace=replace)
-        a = rng.integers(0, 4, size=N)
-        b = rng.integers(1, 5, size=N)
-        ratios = (a + np.sqrt(d)) / b
+        # Randomly skip through the metallic family to avoid one fixed pattern
+        # while keeping the numbers quadratic and badly approximable.
+        n_values = rng.choice(np.arange(1, max(4 * N + 4, 12)),
+                              size=N, replace=False)
+        n_values = np.sort(n_values).astype(float)
+        ratios = 0.5 * (n_values + np.sqrt(n_values * n_values + 4.0))
 
     else:
         ratios = np.ones(N)
 
-    # Put every realisation on the same mean scale so that the comparison is
-    # about commensurability/phase alignment, not simply faster oscillations.
+    ratios = np.array(_normalise_to_unit_mean(ratios), dtype=float)
+    ratios = np.clip(ratios, 0.20, 3.5)
     ratios = ratios / np.mean(ratios)
-
-    # Avoid accidental extreme outliers that make one branch almost frozen or
-    # ultra-fast compared with the rest.
-    ratios = np.clip(ratios, 0.25, 3.0)
 
     return [(g0 * float(r), J0 * float(r)) for r in ratios]
 
@@ -1021,6 +1068,15 @@ with colB:
     st.markdown("**What you should expect:**")
     st.info(what_to_expect(case_name, mode_name))
 
+    if mode_name in ("incommensurate", "badly_approximable"):
+        st.caption(
+            "Note: here 'incommensurate' means well-approximable "
+            "irrational ratios close to a rational ladder; "
+            "'badly approximable' means metallic quadratic irrational "
+            "ratios with bounded continued fractions.  This is designed "
+            "to show the finite-time revival contrast clearly."
+        )
+
     st.markdown("**Selected analytic formula:**")
     st.latex(case_formula(case_name))
 
@@ -1056,8 +1112,10 @@ else:
             "omega_i": [float(f"{w:.6g}") for w in omegas],
             "omega_i / omega_1": [float(f"{r:.6g}") for r in ratios],
         })
-        st.caption("For the incommensurate / badly approximable modes "
-                   "every pair of ratios above should be irrational.")
+        st.caption("For the two irrational modes, ratios are normalised to the "
+                   "same mean scale.  The incommensurate mode is deliberately "
+                   "well-approximable; the badly-approximable mode uses "
+                   "metallic quadratic irrationals.")
 
     st.markdown("**Interpretation:** values near 1 mean strong "
                 "coherence; values near 0 mean strong decoherence.")
@@ -1167,8 +1225,10 @@ if not invalid_combination:
         st.markdown(
             "This panel samples many random frequency realisations and "
             "plots the decoherence curve for the currently selected case. "
-            "It is useful when small N gives misleading single-sample "
-            "revival behaviour."
+            "The incommensurate samples are well-approximable irrational "
+            "ladders; the badly-approximable samples are metallic-type "
+            "quadratic irrationals.  It is useful when small N gives "
+            "misleading single-sample revival behaviour."
         )
 
         random_families = st.multiselect(
