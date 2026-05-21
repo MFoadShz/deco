@@ -602,6 +602,56 @@ def simultaneous_badness_score_from_ratios(ratios, Qmax):
     }
 
 
+def rephasing_candidate_from_ratios(ratios, Qmax, exact_tol=1e-12):
+    """
+    Report the earliest exact commensurate rephasing, if it exists within Qmax,
+    and the best finite-window near-rephasing candidate.
+
+    q is defined in units of the first branch frequency: t = q*pi/omega_1.
+    The quantity time_factor_pi_over_omega0 converts this to the app's common
+    unit t/(pi/omega0), where omega0 = sqrt(g0^2 + J0^2).
+    """
+    ratios = np.array(ratios, dtype=float)
+    if len(ratios) <= 1:
+        return {
+            "exact_q": 1,
+            "exact_time_factor_pi_over_omega0": (1.0 / ratios[0]) if len(ratios) else None,
+            "best_q": 1,
+            "best_time_factor_pi_over_omega0": (1.0 / ratios[0]) if len(ratios) else None,
+            "best_max_phase_distance": 0.0,
+            "Qmax": int(max(1, Qmax)),
+        }
+
+    if ratios[0] == 0:
+        raise ValueError("The first frequency ratio is zero; cannot form theta.")
+
+    theta = ratios[1:] / ratios[0]
+    d = len(theta)
+    Qmax = max(1, int(Qmax))
+    q_values = np.arange(1, Qmax + 1, dtype=float)
+    distances = _distance_to_nearest_integer(q_values[:, None] * theta[None, :])
+    max_distances = np.max(distances, axis=1)
+    scaled = (q_values ** (1.0 / d)) * max_distances
+
+    exact_indices = np.where(max_distances <= exact_tol)[0]
+    exact_q = int(q_values[int(exact_indices[0])]) if len(exact_indices) else None
+    best_idx = int(np.argmin(scaled))
+    best_q = int(q_values[best_idx])
+
+    exact_L = (exact_q / ratios[0]) if exact_q is not None else None
+    best_L = best_q / ratios[0]
+
+    return {
+        "exact_q": exact_q,
+        "exact_time_factor_pi_over_omega0": None if exact_L is None else float(exact_L),
+        "best_q": best_q,
+        "best_time_factor_pi_over_omega0": float(best_L),
+        "best_max_phase_distance": float(max_distances[best_idx]),
+        "best_scaled_distance": float(scaled[best_idx]),
+        "Qmax": int(Qmax),
+    }
+
+
 def suggested_Qmax_from_time_window(t_grid, params, hard_cap=25000):
     """Choose a denominator cutoff matched to the plotted time window."""
     if len(t_grid) == 0 or len(params) == 0:
@@ -612,6 +662,18 @@ def suggested_Qmax_from_time_window(t_grid, params, hard_cap=25000):
     t_extent = float(max(abs(np.min(t_grid)), abs(np.max(t_grid))))
     q_guess = int(np.ceil(max(1.0, t_extent * omega1 / np.pi)))
     return int(max(25, min(hard_cap, q_guess)))
+
+
+def suggested_Qmax_strictly_inside_time_window(t_grid, params, hard_cap=25000):
+    """Largest q whose candidate time t=q*pi/omega_1 lies inside the plot."""
+    if len(t_grid) == 0 or len(params) == 0:
+        return 1
+    omega1 = float(np.sqrt(params[0][0]**2 + params[0][1]**2))
+    if omega1 <= 0:
+        return 1
+    t_extent = float(max(abs(np.min(t_grid)), abs(np.max(t_grid))))
+    q_inside = int(np.floor(max(1.0, t_extent * omega1 / np.pi)))
+    return int(max(1, min(hard_cap, q_inside)))
 
 
 def build_params_with_info(N, g0, J0, mode, disorder=0.05, seed=123):
@@ -809,19 +871,6 @@ def revival_score(t_grid, y, cut_fraction=0.08):
     if not np.any(mask):
         return float(np.max(y))
     return float(np.max(y[mask]))
-
-
-def revival_hint(mode, g0, J0):
-    omega0 = np.sqrt(g0**2 + J0**2)
-    if omega0 == 0:
-        return None, None
-    if mode in ("identical", "integer_commensurate"):
-        return np.pi / omega0, "revival guide"
-    if mode == "rational_commensurate":
-        return 2 * np.pi / omega0, "delayed revival guide"
-    if mode == "weak_disorder":
-        return np.pi / omega0, "identical-case reference"
-    return None, None
 
 
 # =====================================================================
@@ -1114,7 +1163,6 @@ def draw_star_model(statuses):
 # =====================================================================
 
 def plot_main_curve(t, y, case_name, mode_name,
-                    T_rev=None, T_label=None,
                     y_mode="auto", y_manual=1.0):
     fig, ax = plt.subplots(figsize=(10, 3.9))
     ax.plot(t, y, lw=2.2)
@@ -1123,11 +1171,6 @@ def plot_main_curve(t, y, case_name, mode_name,
     ax.set_title(f"{case_name}  |  {mode_name.replace('_', ' ')}  "
                  f"(analytic)")
     ax.grid(True, alpha=0.3)
-
-    if T_rev is not None:
-        ax.axvline(T_rev, linestyle="--", alpha=0.7)
-        ax.text(T_rev, 0.97, T_label, rotation=90, va="top",
-                ha="left", fontsize=9)
 
     if y_mode == "full":
         ax.set_ylim(0.0, 1.02)
@@ -1144,7 +1187,7 @@ def plot_main_curve(t, y, case_name, mode_name,
     return fig
 
 
-def plot_standard_comparison(t, curves, T_rev=None, T_label=None):
+def plot_standard_comparison(t, curves):
     names = list(curves.keys())
     n = len(names)
     cols = 2 if n <= 4 else 3
@@ -1165,16 +1208,11 @@ def plot_standard_comparison(t, curves, T_rev=None, T_label=None):
         if ymax - ymin < 0.12:
             ymax = min(1.02, ymax + 0.06)
         ax.set_ylim(ymin, ymax)
-        if T_rev is not None:
-            ax.axvline(T_rev, linestyle="--", alpha=0.5)
 
     for ax in axes[n:]:
         ax.axis("off")
 
-    if T_rev is not None and T_label is not None:
-        fig.suptitle(f"Standard cases (guide: {T_label})", fontsize=13)
-    else:
-        fig.suptitle("Standard cases", fontsize=13)
+    fig.suptitle("Standard cases", fontsize=13)
 
     plt.tight_layout()
     return fig
@@ -1441,10 +1479,8 @@ else:
             observed_full_count, n_unobserved, n_only_L1, n_only_L2,
         )
 
-    T_rev, T_label = revival_hint(mode_name, g0, J0)
     fig_main = plot_main_curve(
         t_grid, y_selected, case_name, mode_name,
-        T_rev=T_rev, T_label=T_label,
         y_mode=y_mode, y_manual=y_manual,
     )
     st.pyplot(fig_main)
@@ -1478,24 +1514,25 @@ else:
         diagnostic = simultaneous_badness_score_from_ratios(
             unit_mean_ratios, Q_window
         )
+        Q_plot = suggested_Qmax_strictly_inside_time_window(t_grid, params)
+        rephasing = rephasing_candidate_from_ratios(
+            unit_mean_ratios, Q_plot
+        )
         st.markdown("**Finite-window simultaneous Diophantine diagnostic**")
         st.write(diagnostic)
+        st.markdown("**Exact/near rephasing candidate inside the plotted time window**")
+        st.write(rephasing)
         st.caption(
             "c_Q = min_{1<=q<=Qmax} q^(1/d) max_j ||q theta_j||, "
-            "theta_j = omega_{j+1}/omega_1. Larger c_Q means harder "
-            "finite-time simultaneous rephasing inside the plotted window. "
-            "This is a finite-window diagnostic, not a replacement for the "
-            "exact algebraic certificate."
+            "theta_j = omega_{j+1}/omega_1. The rephasing candidate uses "
+            "t = q*pi/omega_1 and also reports t/(pi/omega0), restricted "
+            "to the current plotted time window. Exact_q is shown only when "
+            "the ratios are commensurate within numerical tolerance. Larger "
+            "c_Q means harder finite-time simultaneous rephasing."
         )
 
     st.markdown("**Interpretation:** values near 1 mean strong "
                 "coherence; values near 0 mean strong decoherence.")
-    if T_rev is not None:
-        st.markdown("Dashed line: revival guide at approximately "
-                    f"$T_{{\\mathrm{{guide}}}} \\approx {T_rev:.4f}$.")
-    else:
-        st.markdown("No exact revival guide is drawn for this "
-                    "frequency mode (no simple common period exists).")
 
 
 # =====================================================================
@@ -1768,10 +1805,7 @@ if show_comparison and not invalid_combination:
                     n_only_L2=N // 4,
                 ),
         }
-    T_rev, T_label = revival_hint(mode_name, g0, J0)
-    fig_compare = plot_standard_comparison(
-        t_grid, curves, T_rev=T_rev, T_label=T_label,
-    )
+    fig_compare = plot_standard_comparison(t_grid, curves)
     st.pyplot(fig_compare)
 
     st.markdown(
@@ -1789,14 +1823,16 @@ if show_comparison and not invalid_combination:
 st.markdown("---")
 st.markdown("### Quick summary")
 st.markdown(
-    "- Identical / commensurate frequencies: exact revival.\n"
-    "- Incommensurate frequencies: no exact revival; only irregular "
-    "partial recurrences.\n"
-    "- Badly approximable (golden-ratio family): even weaker "
-    "near-revivals.\n"
-    "- Weak disorder: clean revival washed out continuously with "
-    "disorder strength.\n"
-    "- All plotted curves are produced by closed-form analytic "
-    "expressions; the numeric SVD route is only invoked inside the "
-    "verification tab."
+    "- Identical / commensurate frequencies: exact revival when all branch "
+    "phases share a common period.\n"
+    "- Rational commensurate frequencies: exact revival, but its time depends "
+    "on the denominator structure after normalisation.\n"
+    "- Incommensurate frequencies: no exact revival; well-approximable "
+    "choices can still show earlier finite-time near-revivals.\n"
+    "- Badly approximable frequencies: algebraic simultaneous BA construction "
+    "with suppressed finite-time rephasing diagnostics.\n"
+    "- Weak disorder: clean revival washed out continuously with disorder "
+    "strength.\n"
+    "- All plotted curves are produced by closed-form analytic expressions; "
+    "the numeric SVD route is only invoked inside the verification tab."
 )
