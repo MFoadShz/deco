@@ -26,10 +26,17 @@ s_i = sin(omega_i t)/omega_i, omega_i = sqrt(g_i^2 + J_i^2)) :
 The full decoherence factor is the product of the per-branch factors,
 exactly as in eq. (Dtotal-full) of the LaTeX document.
 
-The incommensurate / badly-approximable frequency families are now
-built so that *no pair of ratios is rationally related*; this fixes
-the visual artefacts of the original prototype where the first ratio
-was always 1.
+The frequency generator now separates three mathematically different
+irrational regimes:
+
+    1. well-approximable incommensurate ratios, placed near an integer
+       ladder so finite-time near-revivals are visible;
+    2. a metallic quadratic-irrational family kept as a useful
+       badly-approximable-inspired baseline;
+    3. a research-grade algebraic power-basis construction whose
+       frequency-ratio vector is a standard simultaneously badly
+       approximable vector, with a finite-window Diophantine diagnostic
+       reported inside the app.
 """
 
 import numpy as np
@@ -37,6 +44,13 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from numpy.linalg import svd
 from matplotlib.lines import Line2D
+
+try:
+    import sympy as sp
+    _HAS_SYMPY = True
+except Exception:
+    sp = None
+    _HAS_SYMPY = False
 
 
 # =====================================================================
@@ -235,7 +249,6 @@ def log_sum_clip(arr, floor=1e-300):
 
 # =====================================================================
 # Frequency-mode generation
-# (incommensurate and badly approximable fixed!)
 # =====================================================================
 
 FREQUENCY_MODE_TEXT = {
@@ -269,29 +282,50 @@ FREQUENCY_MODE_TEXT = {
     "incommensurate": {
         "title": "Well-approximable incommensurate frequencies",
         "desc": (
-            "Ratios are irrational, but deliberately close to an "
-            "integer-commensurate ladder: n + eps*sqrt(p_n).  This "
-            "keeps them incommensurate while making rational near-"
-            "rephasings visible at small N."
+            "Ratios are irrational but deliberately close to an "
+            "integer-commensurate ladder: n + eps*sqrt(p_n), with eps "
+            "chosen rationally.  This keeps the ratios non-commensurate "
+            "while making rational near-rephasings visible at small N."
         ),
         "expect": (
-            "No exact revival, but clearer near-revivals than the "
-            "badly-approximable family because the ratios are close to "
-            "simple rational structure."
+            "No exact revival.  Finite-time near-revivals are relatively "
+            "visible because the ratios were placed close to a simple "
+            "rational ladder."
         ),
     },
     "badly_approximable": {
-        "title": "Badly approximable metallic-ratio frequencies",
+        "title": "Algebraic simultaneously badly-approximable frequencies",
         "desc": (
-            "Ratios use metallic quadratic irrationals "
-            "m_n=(n+sqrt(n^2+4))/2, normalised to the same mean scale. "
-            "These have bounded periodic continued fractions and resist "
-            "good rational approximation."
+            "Research-grade construction.  A real algebraic number beta "
+            "of degree N is selected from an irreducible trinomial "
+            "x^N - a x - 1.  The frequency ratios are proportional to "
+            "1, beta, beta^2, ..., beta^(N-1).  The vector "
+            "(beta, beta^2, ..., beta^(N-1)) is the standard algebraic "
+            "power-basis example of a simultaneously badly approximable "
+            "vector."
         ),
         "expect": (
-            "Weaker finite-time near-revivals than the well-"
-            "approximable incommensurate family, especially for small "
-            "N when the time window is not too short."
+            "No exact revival and systematically suppressed finite-time "
+            "near-rephasing compared with the well-approximable "
+            "incommensurate family.  The app reports a finite-window "
+            "Diophantine score c_Q as a numerical diagnostic."
+        ),
+    },
+    "metallic_ba_inspired": {
+        "title": "Metallic badly-approximable-inspired frequencies",
+        "desc": (
+            "Legacy baseline retained for comparison.  Ratios use "
+            "metallic quadratic irrationals m_n=(n+sqrt(n^2+4))/2, "
+            "normalised to the same mean scale.  Each raw m_n is a "
+            "quadratic irrational with bounded periodic continued "
+            "fraction, but this does not certify that the full frequency "
+            "vector is simultaneously badly approximable."
+        ),
+        "expect": (
+            "Usually weaker near-revivals than the well-approximable "
+            "incommensurate family, but it should be described as a "
+            "BA-inspired baseline rather than a rigorous vector-level "
+            "construction."
         ),
     },
     "weak_disorder": {
@@ -334,23 +368,42 @@ def _normalise_to_unit_mean(values):
     return list(values / mean)
 
 
-def _well_approximable_incommensurate_ratios(N, eps=0.035):
+def _params_from_ratios(g0, J0, ratios):
+    """Convert dimensionless frequency ratios into branch couplings."""
+    ratios = np.array(ratios, dtype=float)
+    return [(g0 * float(r), J0 * float(r)) for r in ratios]
+
+
+def _frequency_info(mode, ratios, construction, claim, **metadata):
+    ratios = np.array(ratios, dtype=float)
+    return {
+        "mode": mode,
+        "ratios": ratios,
+        "construction": construction,
+        "claim": claim,
+        **metadata,
+    }
+
+
+def _well_approximable_incommensurate_ratios(N, eps_num=35, eps_den=1000):
     """
     Irrational but intentionally well-approximable ratios.
 
     Construction:
-        r_n = n + eps*sqrt(p_n),  n = 1,...,N.
+        r_n = n + eps*sqrt(p_n),  n = 1,...,N,
+        eps = eps_num / eps_den.
 
     The integer ladder gives a nearby common period, while the sqrt(p_n)
-    perturbation makes the ratios genuinely irrational.  This is useful as a
-    pedagogical contrast with badly-approximable ratios: both are
-    incommensurate, but this family admits much better finite-time
-    near-rephasings.
+    perturbation makes the ratios genuinely irrational at the mathematical
+    construction level.  This is useful as a controlled contrast with the
+    badly-approximable mode: both are non-commensurate, but this family admits
+    much better finite-time near-rephasings.
     """
     if N <= 0:
         return []
     primes = _first_primes(N)
     ladder = np.arange(1, N + 1, dtype=float)
+    eps = float(eps_num) / float(eps_den)
     raw = ladder + eps * np.sqrt(np.array(primes, dtype=float))
     return _normalise_to_unit_mean(raw)
 
@@ -360,9 +413,10 @@ def _metallic_badly_approximable_ratios(N):
     Metallic quadratic irrationals, normalised to unit mean.
 
     m_n = (n + sqrt(n^2 + 4))/2 has periodic continued fraction
-    [n; n, n, n, ...].  Each m_n is a quadratic irrational and is badly
-    approximable.  This avoids the earlier golden-ratio-power artefact where
-    all entries were locked inside the same very low-dimensional structure.
+    [n; n, n, n, ...].  Each m_n is a quadratic irrational and is individually
+    badly approximable.  This is retained as a useful BA-inspired baseline, but
+    it is not a rigorous certificate that the whole N-frequency vector is
+    simultaneously badly approximable.
     """
     if N <= 0:
         return []
@@ -371,92 +425,372 @@ def _metallic_badly_approximable_ratios(N):
     return _normalise_to_unit_mean(raw)
 
 
-def build_params(N, g0, J0, mode, disorder=0.05, seed=123):
+def _trinomial_coefficients(degree, a):
+    """Coefficients of x^degree - a*x - 1 in descending order."""
+    if degree < 2:
+        return [1.0, -1.0]
+    return [1.0] + [0.0] * (degree - 2) + [-float(a), -1.0]
+
+
+def _real_root_larger_than_one_of_trinomial(degree, a):
+    """Numerically find the real root beta > 1 of x^degree - a*x - 1."""
+    coeffs = _trinomial_coefficients(degree, a)
+    roots = np.roots(coeffs)
+    real_roots = [float(z.real) for z in roots
+                  if abs(z.imag) < 1e-8 and z.real > 1.0]
+    if not real_roots:
+        raise ValueError(
+            f"Could not find a real root > 1 for x^{degree} - {a} x - 1."
+        )
+    return max(real_roots)
+
+
+def _is_irreducible_trinomial_over_Q(degree, a):
     """
-    Build a list of (g_i, J_i) per branch.
+    Return True/False if SymPy is available; otherwise return None.
 
-    The deterministic irrational families are now deliberately separated:
+    Irreducibility over Q is the important algebraic certificate: if the
+    polynomial has exact degree N and beta is one of its roots, then beta has
+    algebraic degree N.  The power basis (beta, ..., beta^(N-1)) is then the
+    standard simultaneous badly-approximable vector.
+    """
+    if not _HAS_SYMPY:
+        return None
+    x = sp.Symbol("x")
+    poly = sp.Poly(x**degree - int(a) * x - 1, x, domain=sp.QQ)
+    return bool(poly.is_irreducible)
 
-    * incommensurate:
-        irrational but well-approximable, close to an integer ladder;
-        this creates visible finite-time near-revivals.
 
-    * badly_approximable:
-        metallic quadratic irrationals with bounded continued fractions;
-        this suppresses rational near-rephasing more strongly.
+def _select_irreducible_trinomial_parameter(degree, seed=123,
+                                             a_min=1, a_max=80):
+    """
+    Pick an integer a such that x^degree - a*x - 1 is irreducible over Q.
 
-    Both families are normalised to unit mean before multiplying by g0,J0.
+    The search is deterministic for a given seed.  With SymPy installed the
+    irreducibility check is exact.  Without SymPy, the code falls back to a=1
+    and labels the certificate as unavailable rather than pretending to prove
+    irreducibility.
+    """
+    if degree < 2:
+        return 1, None
+
+    if not _HAS_SYMPY:
+        return 1, None
+
+    rng = np.random.default_rng(seed)
+    candidates = np.arange(int(a_min), int(a_max) + 1, dtype=int)
+    rng.shuffle(candidates)
+
+    for a in candidates:
+        if _is_irreducible_trinomial_over_Q(degree, int(a)):
+            return int(a), True
+
+    # Deterministic fallback search outside the original window.
+    for a in range(int(a_max) + 1, int(a_max) + 500):
+        if _is_irreducible_trinomial_over_Q(degree, int(a)):
+            return int(a), True
+
+    raise RuntimeError(
+        "No irreducible trinomial x^N - a*x - 1 was found in the search range."
+    )
+
+
+def _algebraic_simultaneously_badly_ratios(N, seed=123):
+    """
+    Research-grade simultaneous badly-approximable frequency family.
+
+    For N branches choose beta as the real root > 1 of an irreducible
+    polynomial
+
+        p(x) = x^N - a x - 1.
+
+    Then beta has algebraic degree N.  The frequency-ratio vector relevant for
+    simultaneous rephasing is
+
+        theta = (omega_2/omega_1, ..., omega_N/omega_1)
+              = (beta, beta^2, ..., beta^(N-1)).
+
+    Since 1, beta, ..., beta^(N-1) are linearly independent over Q, the power
+    basis gives the standard algebraic example of a simultaneously badly
+    approximable vector.  The app additionally computes the finite-window
+    diagnostic c_Q for the actually plotted time window.
     """
     if N <= 0:
-        return []
+        return [], {}
+    if N == 1:
+        return [1.0], {
+            "degree": 1,
+            "a": None,
+            "beta": None,
+            "polynomial": "trivial one-frequency case",
+            "irreducible_over_Q": True,
+            "certificate": "trivial",
+        }
+
+    degree = int(N)
+    a, irreducible = _select_irreducible_trinomial_parameter(
+        degree, seed=seed
+    )
+    beta = _real_root_larger_than_one_of_trinomial(degree, a)
+    raw = np.array([beta**k for k in range(N)], dtype=float)
+    ratios = np.array(_normalise_to_unit_mean(raw), dtype=float)
+
+    certificate = (
+        "exact SymPy irreducibility certificate over Q"
+        if irreducible is True else
+        "SymPy unavailable: algebraic construction used, irreducibility not certified"
+    )
+
+    metadata = {
+        "degree": degree,
+        "a": int(a),
+        "beta": float(beta),
+        "polynomial": f"x^{degree} - {int(a)} x - 1",
+        "irreducible_over_Q": irreducible,
+        "certificate": certificate,
+    }
+    return list(ratios), metadata
+
+
+def _distance_to_nearest_integer(x):
+    return np.abs(x - np.rint(x))
+
+
+def simultaneous_badness_score_from_ratios(ratios, Qmax):
+    """
+    Finite-window simultaneous Diophantine diagnostic.
+
+    For theta = (omega_2/omega_1, ..., omega_N/omega_1), compute
+
+        c_Q = min_{1 <= q <= Qmax} q^(1/d) max_j || q theta_j ||,
+        d = len(theta).
+
+    A larger c_Q means that, up to denominator Qmax, the frequency vector is
+    harder to rephase simultaneously.  This is not a proof of the infinite-q
+    badly-approximable constant, but it is the physically relevant finite-time
+    test for the plotted window.
+    """
+    ratios = np.array(ratios, dtype=float)
+    if len(ratios) <= 1:
+        return {
+            "c_Q": np.nan,
+            "q_best": None,
+            "max_distance_at_q_best": np.nan,
+            "dimension": 0,
+            "Qmax": int(Qmax),
+        }
+
+    if ratios[0] == 0:
+        raise ValueError("The first frequency ratio is zero; cannot form theta.")
+
+    theta = ratios[1:] / ratios[0]
+    d = len(theta)
+    Qmax = max(1, int(Qmax))
+
+    q_values = np.arange(1, Qmax + 1, dtype=float)
+    distances = _distance_to_nearest_integer(q_values[:, None] * theta[None, :])
+    max_distances = np.max(distances, axis=1)
+    scaled = (q_values ** (1.0 / d)) * max_distances
+    idx = int(np.argmin(scaled))
+
+    return {
+        "c_Q": float(scaled[idx]),
+        "q_best": int(q_values[idx]),
+        "max_distance_at_q_best": float(max_distances[idx]),
+        "dimension": int(d),
+        "Qmax": int(Qmax),
+    }
+
+
+def suggested_Qmax_from_time_window(t_grid, params, hard_cap=25000):
+    """Choose a denominator cutoff matched to the plotted time window."""
+    if len(t_grid) == 0 or len(params) == 0:
+        return 1
+    omega1 = float(np.sqrt(params[0][0]**2 + params[0][1]**2))
+    if omega1 <= 0:
+        return 1
+    t_extent = float(max(abs(np.min(t_grid)), abs(np.max(t_grid))))
+    q_guess = int(np.ceil(max(1.0, t_extent * omega1 / np.pi)))
+    return int(max(25, min(hard_cap, q_guess)))
+
+
+def build_params_with_info(N, g0, J0, mode, disorder=0.05, seed=123):
+    """
+    Build a list of (g_i, J_i) per branch plus frequency metadata.
+
+    The plotted curves only need the couplings, but the metadata is important
+    for research use: it states what was actually constructed and what can be
+    legitimately claimed about the frequency ratios.
+    """
+    if N <= 0:
+        return [], _frequency_info(
+            mode, [], "empty", "No branches were generated."
+        )
 
     if mode == "identical":
         ratios = [1.0] * N
+        info = _frequency_info(
+            mode, ratios,
+            "r_i = 1 for all i",
+            "Exact common period; fully commensurate."
+        )
 
     elif mode == "integer_commensurate":
         base = [1.0, 2.0, 3.0, 4.0]
-        ratios = [base[i % len(base)] for i in range(N)]
+        raw = [base[i % len(base)] for i in range(N)]
+        ratios = _normalise_to_unit_mean(raw)
+        info = _frequency_info(
+            mode, ratios,
+            "integer ladder repeated and normalised to unit mean",
+            "Exact common period; fully commensurate."
+        )
 
     elif mode == "rational_commensurate":
         base = [1.0, 1.5, 2.0, 2.5, 3.0]
-        ratios = [base[i % len(base)] for i in range(N)]
+        raw = [base[i % len(base)] for i in range(N)]
+        ratios = _normalise_to_unit_mean(raw)
+        info = _frequency_info(
+            mode, ratios,
+            "rational ladder repeated and normalised to unit mean",
+            "Exact common period; fully commensurate."
+        )
 
     elif mode == "incommensurate":
-        ratios = _well_approximable_incommensurate_ratios(N, eps=0.035)
+        ratios = _well_approximable_incommensurate_ratios(N, eps_num=35)
+        info = _frequency_info(
+            mode, ratios,
+            "r_n = n + (35/1000)*sqrt(p_n), then normalised",
+            "Irrational and non-commensurate, deliberately well approximable."
+        )
 
     elif mode == "badly_approximable":
+        ratios, metadata = _algebraic_simultaneously_badly_ratios(
+            N, seed=seed
+        )
+        info = _frequency_info(
+            mode, ratios,
+            "algebraic power basis 1, beta, ..., beta^(N-1), normalised",
+            "Vector-level simultaneous badly-approximable construction.",
+            **metadata,
+        )
+
+    elif mode == "metallic_ba_inspired":
         ratios = _metallic_badly_approximable_ratios(N)
+        info = _frequency_info(
+            mode, ratios,
+            "m_n=(n+sqrt(n^2+4))/2, normalised",
+            "Each raw entry is individually badly approximable; vector-level "
+            "simultaneous BA is not certified."
+        )
 
     elif mode == "weak_disorder":
         rng = np.random.default_rng(seed)
         ratios = list(1.0 + disorder * rng.normal(size=N))
         ratios = [max(0.05, r) for r in ratios]
+        ratios = _normalise_to_unit_mean(ratios)
+        info = _frequency_info(
+            mode, ratios,
+            f"r_i = 1 + normal disorder, sigma={disorder:g}, then clipped",
+            "Generic random disorder; no exact common period expected."
+        )
 
     else:
         ratios = [1.0] * N
+        info = _frequency_info(
+            mode, ratios,
+            "fallback identical ratios",
+            "Unknown mode, used identical frequencies."
+        )
 
-    return [(g0 * float(r), J0 * float(r)) for r in ratios]
+    return _params_from_ratios(g0, J0, ratios), info
 
 
-def random_params(N, g0, J0, family, rng):
+def build_params(N, g0, J0, mode, disorder=0.05, seed=123):
+    """Backward-compatible wrapper: return only branch couplings."""
+    params, _ = build_params_with_info(
+        N, g0, J0, mode, disorder=disorder, seed=seed
+    )
+    return params
+
+
+def random_params_with_info(N, g0, J0, family, rng, seed_offset=0):
     """
     Build one random frequency realisation for ensemble-style comparison.
 
     incommensurate:
-        Well-approximable irrational ratios near randomly perturbed integer
-        ladders.  These are not rationally commensurate, but they are close to
-        simple rational structure, so near-revivals can appear.
+        well-approximable irrational ratios near randomly perturbed integer
+        ladders.  The perturbations are rational at the construction level.
 
     badly_approximable:
-        Random metallic-type quadratic irrationals with bounded periodic
-        continued fractions, then normalised to the same mean scale.
+        true vector-level algebraic simultaneous badly approximable family,
+        with a random irreducible trinomial parameter selected through the
+        supplied seed.
+
+    metallic_ba_inspired:
+        legacy metallic quadratic family with random skipped metallic indices.
     """
     if N <= 0:
-        return []
+        return [], _frequency_info(family, [], "empty", "No branches.")
 
     if family == "incommensurate":
         primes = np.array(_first_primes(N), dtype=float)
         ladder = np.arange(1, N + 1, dtype=float)
-        eps = rng.uniform(0.015, 0.070)
-        jitter = rng.uniform(-0.010, 0.010, size=N)
+        eps_num = int(rng.integers(15, 71))
+        jitter_num = rng.integers(-10, 11, size=N)
+        eps = eps_num / 1000.0
+        jitter = jitter_num / 1000.0
         ratios = ladder + eps * np.sqrt(primes) + jitter
+        ratios = np.array(_normalise_to_unit_mean(ratios), dtype=float)
+        info = _frequency_info(
+            family, ratios,
+            "random rationally-jittered n + eps*sqrt(p_n) ladder",
+            "Irrational and non-commensurate, deliberately well approximable.",
+            eps_num=int(eps_num),
+        )
 
     elif family == "badly_approximable":
-        # Randomly skip through the metallic family to avoid one fixed pattern
-        # while keeping the numbers quadratic and badly approximable.
+        # The seed is generated outside from the trial number to keep runs
+        # reproducible while still sampling different irreducible trinomials.
+        algebraic_seed = int(rng.integers(0, 2**31 - 1)) + int(seed_offset)
+        ratios, metadata = _algebraic_simultaneously_badly_ratios(
+            N, seed=algebraic_seed
+        )
+        ratios = np.array(ratios, dtype=float)
+        info = _frequency_info(
+            family, ratios,
+            "random algebraic power basis from irreducible x^N-a*x-1",
+            "Vector-level simultaneous badly-approximable construction.",
+            algebraic_seed=algebraic_seed,
+            **metadata,
+        )
+
+    elif family == "metallic_ba_inspired":
         n_values = rng.choice(np.arange(1, max(4 * N + 4, 12)),
                               size=N, replace=False)
         n_values = np.sort(n_values).astype(float)
         ratios = 0.5 * (n_values + np.sqrt(n_values * n_values + 4.0))
+        ratios = np.array(_normalise_to_unit_mean(ratios), dtype=float)
+        info = _frequency_info(
+            family, ratios,
+            "random skipped metallic quadratic irrationals",
+            "Individually BA entries; simultaneous vector-level BA not certified."
+        )
 
     else:
         ratios = np.ones(N)
+        info = _frequency_info(
+            family, ratios,
+            "fallback identical ratios",
+            "Unknown random family."
+        )
 
-    ratios = np.array(_normalise_to_unit_mean(ratios), dtype=float)
-    ratios = np.clip(ratios, 0.20, 3.5)
-    ratios = ratios / np.mean(ratios)
+    return _params_from_ratios(g0, J0, ratios), info
 
-    return [(g0 * float(r), J0 * float(r)) for r in ratios]
+
+def random_params(N, g0, J0, family, rng):
+    """Backward-compatible wrapper: return only branch couplings."""
+    params, _ = random_params_with_info(N, g0, J0, family, rng)
+    return params
 
 
 def revival_score(t_grid, y, cut_fraction=0.08):
@@ -932,7 +1266,8 @@ case_name = st.sidebar.radio(
 mode_name = st.sidebar.radio(
     "Frequency mode",
     ["identical", "integer_commensurate", "rational_commensurate",
-     "incommensurate", "badly_approximable", "weak_disorder"],
+     "incommensurate", "badly_approximable",
+     "metallic_ba_inspired", "weak_disorder"],
 )
 
 N  = st.sidebar.slider("Number of branches N", 1, 30, 12, 1)
@@ -950,7 +1285,13 @@ if ax0**2 + ay0**2 + az0**2 > 1.0001:
 disorder, seed = 0.06, 123
 if mode_name == "weak_disorder":
     disorder = st.sidebar.slider("Disorder strength", 0.0, 0.20, 0.06, 0.01)
-    seed     = st.sidebar.number_input("Random seed", 0, 999999, 123, 1)
+    seed = st.sidebar.number_input("Random seed", 0, 999999, 123, 1)
+elif mode_name == "badly_approximable":
+    seed = st.sidebar.number_input("Algebraic seed", 0, 999999, 123, 1)
+    st.sidebar.caption(
+        "The seed selects an irreducible trinomial x^N - a x - 1. "
+        "With SymPy installed, irreducibility is checked over Q."
+    )
 
 omega0 = np.sqrt(g0**2 + J0**2)
 T0     = np.pi / omega0 if omega0 > 0 else 1.0
@@ -1034,7 +1375,9 @@ show_comparison = st.sidebar.checkbox(
 # Build params and time grid
 # =====================================================================
 
-params = build_params(N, g0, J0, mode_name, disorder=disorder, seed=seed)
+params, freq_info = build_params_with_info(
+    N, g0, J0, mode_name, disorder=disorder, seed=seed
+)
 t_grid = np.linspace(t_start, t_end, n_points)
 
 invalid_combination = (case_name == "Combination" and n_full_comb < 0)
@@ -1068,13 +1411,15 @@ with colB:
     st.markdown("**What you should expect:**")
     st.info(what_to_expect(case_name, mode_name))
 
-    if mode_name in ("incommensurate", "badly_approximable"):
+    if mode_name in (
+        "incommensurate", "badly_approximable", "metallic_ba_inspired"
+    ):
         st.caption(
-            "Note: here 'incommensurate' means well-approximable "
-            "irrational ratios close to a rational ladder; "
-            "'badly approximable' means metallic quadratic irrational "
-            "ratios with bounded continued fractions.  This is designed "
-            "to show the finite-time revival contrast clearly."
+            "Irrational modes are separated by Diophantine strength: "
+            "incommensurate = well-approximable irrational ladder; "
+            "badly_approximable = algebraic simultaneous BA power basis; "
+            "metallic_ba_inspired = legacy individual quadratic-irrational "
+            "baseline without a vector-level certificate."
         )
 
     st.markdown("**Selected analytic formula:**")
@@ -1105,17 +1450,43 @@ else:
     st.pyplot(fig_main)
 
     # ---- a small text panel with branch frequencies (debug aid)
-    with st.expander("Branch frequencies used"):
+    with st.expander("Branch frequencies used and Diophantine diagnostic"):
         omegas = np.array([np.sqrt(g**2 + J**2) for (g, J) in params])
-        ratios = omegas / omegas[0] if omegas[0] != 0 else omegas
+        ratios_to_first = omegas / omegas[0] if omegas[0] != 0 else omegas
+        unit_mean_ratios = np.array(freq_info.get("ratios", []), dtype=float)
+
         st.write({
-            "omega_i": [float(f"{w:.6g}") for w in omegas],
-            "omega_i / omega_1": [float(f"{r:.6g}") for r in ratios],
+            "omega_i": [float(f"{w:.8g}") for w in omegas],
+            "omega_i / omega_1": [float(f"{r:.8g}") for r in ratios_to_first],
+            "unit_mean_ratio_used_for_g_i_J_i": [
+                float(f"{r:.8g}") for r in unit_mean_ratios
+            ],
         })
-        st.caption("For the two irrational modes, ratios are normalised to the "
-                   "same mean scale.  The incommensurate mode is deliberately "
-                   "well-approximable; the badly-approximable mode uses "
-                   "metallic quadratic irrationals.")
+
+        st.markdown("**Frequency construction**")
+        st.write({
+            "mode": freq_info.get("mode"),
+            "construction": freq_info.get("construction"),
+            "claim": freq_info.get("claim"),
+            "polynomial": freq_info.get("polynomial"),
+            "irreducible_over_Q": freq_info.get("irreducible_over_Q"),
+            "certificate": freq_info.get("certificate"),
+            "beta": freq_info.get("beta"),
+        })
+
+        Q_window = suggested_Qmax_from_time_window(t_grid, params)
+        diagnostic = simultaneous_badness_score_from_ratios(
+            unit_mean_ratios, Q_window
+        )
+        st.markdown("**Finite-window simultaneous Diophantine diagnostic**")
+        st.write(diagnostic)
+        st.caption(
+            "c_Q = min_{1<=q<=Qmax} q^(1/d) max_j ||q theta_j||, "
+            "theta_j = omega_{j+1}/omega_1. Larger c_Q means harder "
+            "finite-time simultaneous rephasing inside the plotted window. "
+            "This is a finite-window diagnostic, not a replacement for the "
+            "exact algebraic certificate."
+        )
 
     st.markdown("**Interpretation:** values near 1 mean strong "
                 "coherence; values near 0 mean strong decoherence.")
@@ -1226,14 +1597,15 @@ if not invalid_combination:
             "This panel samples many random frequency realisations and "
             "plots the decoherence curve for the currently selected case. "
             "The incommensurate samples are well-approximable irrational "
-            "ladders; the badly-approximable samples are metallic-type "
-            "quadratic irrationals.  It is useful when small N gives "
-            "misleading single-sample revival behaviour."
+            "ladders; the badly-approximable samples use the algebraic "
+            "simultaneous BA construction; the metallic option is kept as "
+            "a legacy BA-inspired baseline.  This is useful when small N "
+            "gives misleading single-sample revival behaviour."
         )
 
         random_families = st.multiselect(
             "Families to sample",
-            ["incommensurate", "badly_approximable"],
+            ["incommensurate", "badly_approximable", "metallic_ba_inspired"],
             default=["incommensurate", "badly_approximable"],
             key="random_families_select",
         )
@@ -1265,6 +1637,7 @@ if not invalid_combination:
             family_offsets = {
                 "incommensurate": 0,
                 "badly_approximable": 100_000,
+                "metallic_ba_inspired": 200_000,
             }
 
             fig, ax = plt.subplots(figsize=(10, 4.4))
@@ -1279,8 +1652,8 @@ if not invalid_combination:
                     rng_trial = np.random.default_rng(
                         int(random_seed) + offset + trial
                     )
-                    params_trial = random_params(
-                        N, g0, J0, family, rng_trial
+                    params_trial, info_trial = random_params_with_info(
+                        N, g0, J0, family, rng_trial, seed_offset=trial
                     )
 
                     y_trial = compute_selected_curve(
@@ -1308,10 +1681,22 @@ if not invalid_combination:
                     ])
                     omega_ratios = omegas / np.mean(omegas)
 
+                    Q_trial = suggested_Qmax_from_time_window(
+                        t_grid, params_trial
+                    )
+                    dio = simultaneous_badness_score_from_ratios(
+                        info_trial.get("ratios", omega_ratios), Q_trial
+                    )
+
                     rows.append({
                         "family": family,
                         "trial": trial + 1,
                         "revival_score": score,
+                        "c_Q": dio["c_Q"],
+                        "q_best": dio["q_best"],
+                        "Qmax": dio["Qmax"],
+                        "polynomial": info_trial.get("polynomial"),
+                        "irreducible_over_Q": info_trial.get("irreducible_over_Q"),
                         "min_omega_ratio": float(np.min(omega_ratios)),
                         "max_omega_ratio": float(np.max(omega_ratios)),
                         "ratio_spread": float(
